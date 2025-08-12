@@ -106,7 +106,7 @@ jobs:
         if: ${{ env.errorMessage != '' }}
         uses: ./.github/actions/sta-status
         with:
-          callback_urls: ${{ github.event.inputs.aemy_callbacks_urls }}
+          callback_urls: ${{ github.event.inputs.aemy_callback_urls }}
           context: ${{ github.event.inputs.aemy_context }}
           message: ${{ env.errorMessage }}
           status_type: error
@@ -115,7 +115,7 @@ jobs:
       - name: '[Progress] Downloading and extracting zip file'
         uses: ./.github/actions/sta-status
         with:
-          callback_urls: ${{ github.event.inputs.aemy_callbacks_urls }}
+          callback_urls: ${{ github.event.inputs.aemy_callback_urls }}
           context: ${{ github.event.inputs.aemy_context }}
           message: Downloading and extracting content from zip... (Step 1 of ${{ env.total_steps }}) ${{ env.ACTION_URL }}
           status_type: progress
@@ -131,7 +131,7 @@ jobs:
         if: ${{ steps.download-zip.outputs.error_message != '' }}
         uses: ./.github/actions/sta-status
         with:
-          callback_urls: ${{ github.event.inputs.aemy_callbacks_urls }}
+          callback_urls: ${{ github.event.inputs.aemy_callback_urls }}
           context: ${{ github.event.inputs.aemy_context }}
           message: ${{ steps.download-zip.outputs.error_message }} ${{ env.ACTION_URL }}
           status_type: error
@@ -140,7 +140,7 @@ jobs:
       - name: '[Progress] Uploading pages to DA'
         uses: ./.github/actions/sta-status
         with:
-          callback_urls: ${{ github.event.inputs.aemy_callbacks_urls }}
+          callback_urls: ${{ github.event.inputs.aemy_callback_urls }}
           context: ${{ github.event.inputs.aemy_context }}
           message: Zip extracted with ${{ steps.download-zip.outputs.file_count }} files. (Step 2 of ${{ env.total_steps }}).
           status_type: progress
@@ -159,7 +159,7 @@ jobs:
         if: ${{ steps.da-upload-step.outputs.error_message != '' }}
         uses: ./.github/actions/sta-status
         with:
-          callback_urls: ${{ github.event.inputs.aemy_callbacks_urls }}
+          callback_urls: ${{ github.event.inputs.aemy_callback_urls }}
           context: ${{ github.event.inputs.aemy_context }}
           message: ${{ steps.da-upload-step.outputs.error_message }} ${{ env.ACTION_URL }} 
           status_type: error
