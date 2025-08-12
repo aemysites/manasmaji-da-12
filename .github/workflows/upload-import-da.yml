@@ -178,7 +178,7 @@ jobs:
       - name: Preview and publish
         id: preview-publish-content
         if: ${{ env.preview_operation != '' }}
-        uses: ./.github/actions/sta-aem-helper
+        uses: ./.github/actions/sta-da-helper
         with:
           context: ${{ github.event.inputs.aemy_context }}
           pages: ${{ steps.da-upload-step.outputs.paths }}
