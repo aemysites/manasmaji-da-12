@@ -51,11 +51,6 @@ function getOrgAndSiteFromTargetUrl(target) {
  */
 export async function getAccessToken(clientId, clientSecret, serviceToken) {
   core.info('Exchanging IMS credentials for access token...');
-  
-  // Log parameter validation (without exposing sensitive values)
-  core.info(`Using client_id: ${clientId.substring(0, 8)}... (length: ${clientId.length})`);
-  core.info(`Using client_secret: ****** (length: ${clientSecret.length})`);
-  core.info(`Using service_token: ${serviceToken.substring(0, 8)}... (length: ${serviceToken.length})`);
 
   // Prepare form-encoded data (matching the working curl request)
   const formParams = new URLSearchParams();
@@ -63,8 +58,6 @@ export async function getAccessToken(clientId, clientSecret, serviceToken) {
   formParams.append('client_id', clientId);
   formParams.append('client_secret', clientSecret);
   formParams.append('code', serviceToken);
-
-  core.info(`Making request to: ${IMS_TOKEN_ENDPOINT}`);
 
   const response = await fetch(IMS_TOKEN_ENDPOINT, {
     method: 'POST',
@@ -76,18 +69,7 @@ export async function getAccessToken(clientId, clientSecret, serviceToken) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    core.error(`IMS token exchange failed ${response.status}: ${errorText}`);
-    
-    // Parse error response for better debugging
-    try {
-      const errorJson = JSON.parse(errorText);
-      if (errorJson.error === 'invalid_client') {
-        core.error('❌ Invalid client credentials. Please verify DA_CLIENT_ID and DA_CLIENT_SECRET are correct.');
-      }
-    } catch (parseError) {
-      // Error text is not JSON, continue with original error
-    }
-    
+    core.warning(`IMS token exchange failed ${response.status}: ${errorText}`);
     throw new Error(`Failed to exchange IMS credentials: ${response.status} ${errorText}`);
   }
 
@@ -187,6 +169,91 @@ function checkForRequiredContent(contentPath) {
 }
 
 /**
+ * Performs DA preview or publish operation using the DA Admin API
+ * @param {string[]} pages - Array of page paths to preview/publish
+ * @param {string} operation - Either 'preview' or 'previewAndPublish'
+ * @param {string} context - AEMY context containing project info
+ * @param {string} token - DA access token
+ */
+async function doDAPreviewPublish(pages, operation, context, token) {
+  const { project } = JSON.parse(context);
+  const { owner, repo, branch = 'main' } = project;
+
+  if (!owner || !repo) {
+    throw new Error('Invalid context format: missing owner or repo.');
+  }
+
+  const report = {
+    successes: 0,
+    failures: 0,
+    failureList: {
+      preview: [],
+      publish: [],
+    },
+  };
+
+  // For previewAndPublish, we do both operations
+  const operations = operation === 'previewAndPublish' ? ['preview', 'live'] : ['preview'];
+  
+  for (const op of operations) {
+    const baseUrl = `https://admin.hlx.page/${op}/${owner}/${repo}/${branch}`;
+    
+    for (const page of pages) {
+      // Remove leading slash and ensure proper path format  
+      const cleanPath = page.startsWith('/') ? page.substring(1) : page;
+      const url = `${baseUrl}/${cleanPath}`;
+      
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: '{}',
+        });
+
+        if (response.ok) {
+          const operationName = op === 'live' ? 'publish' : op;
+          core.info(`✓ ${operationName} success: ${page}`);
+          report.successes += 1;
+        } else {
+          const errorText = await response.text();
+          const operationName = op === 'live' ? 'publish' : op;
+          core.info(`.${operationName} operation failed on ${page}: ${response.status} : ${response.statusText} : ${errorText}`);
+          
+          if (response.status === 401) {
+            core.warning(`❌ Operation failed: The token is invalid.`);
+          } else {
+            core.warning(`❌ Operation failed on ${page}: ${errorText}`);
+          }
+          
+          report.failures += 1;
+          // Store failures under the user-facing name (publish instead of live)
+          const failureKey = op === 'live' ? 'publish' : op;
+          report.failureList[failureKey].push(page);
+        }
+      } catch (error) {
+        const operationName = op === 'live' ? 'publish' : op;
+        core.warning(`❌ ${operationName} failed for ${page}: ${error.message}`);
+        report.failures += 1;
+        const failureKey = op === 'live' ? 'publish' : op;
+        report.failureList[failureKey].push(page);
+      }
+    }
+  }
+
+  core.setOutput('successes', report.successes);
+  core.setOutput('failures', report.failures);
+
+  if (report.failures > 0) {
+    core.warning(`❌ The pages that failed are: ${JSON.stringify(report.failureList, undefined, 2)}`);
+    const totalExpected = operations.length * pages.length;
+    core.setOutput('error_message', `❌ Error: Failed to ${operation} ${report.failures} of ${totalExpected} operations.`);
+  }
+}
+
+/**
 * Main function for the GitHub Action.
 *
 * Depending on the provided operation, different outputs are set:
@@ -196,6 +263,12 @@ function checkForRequiredContent(contentPath) {
 * | operation          | output                                         |
 * |---------------------------------------------------------------------|
 * | upload             | paths - the list of files that were uploaded   |
+* |---------------------------------------------------------------------|
+* | preview            | successes - number of successful operations    |
+* |                    | failures - number of failures                  |
+* |---------------------------------------------------------------------|
+* | previewAndPublish  | successes - number of successful operations    |
+* |                    | failures - number of failures                  |
 * |---------------------------------------------------------------------|
 * |  *                 | error_message - string describing the error    |
 * |---------------------------------------------------------------------|
@@ -225,18 +298,8 @@ export async function run() {
         throw new Error('Missing required DA credentials: DA_CLIENT_ID, DA_CLIENT_SECRET, and DA_SERVICE_TOKEN must be set');
       }
 
-      // Log credential validation (without exposing values)
-      core.info(`✅ DA_CLIENT_ID length: ${clientId.length}`);
-      core.info(`✅ DA_CLIENT_SECRET length: ${clientSecret.length}`);
-      core.info(`✅ DA_SERVICE_TOKEN length: ${serviceToken.length}`);
-      
-      // Trim whitespace from credentials (just to be safe)
-      const trimmedClientId = clientId.trim();
-      const trimmedClientSecret = clientSecret.trim();
-      const trimmedServiceToken = serviceToken.trim();
-
       // Exchange IMS credentials for access token
-      const accessToken = await getAccessToken(trimmedClientId, trimmedClientSecret, trimmedServiceToken);
+      const accessToken = await getAccessToken(clientId, clientSecret, serviceToken);
 
       checkForRequiredContent(contentPath);
       const files = await uploadToDa(contentPath, target, accessToken, skipAssets);
@@ -245,8 +308,35 @@ export async function run() {
       core.error(`DA Error: ${error.message}`);
       core.setOutput('error_message', `❌ Error during DA upload: ${error.message}`);
     }
+  } else if (operation === 'preview' || operation === 'previewAndPublish') {
+    // DA preview/publish operations
+    const pagesInput = core.getInput('pages');
+    const context = core.getInput('context');
+    
+    try {
+      const pages = JSON.parse(pagesInput);
+      
+      // Get DA credentials for token exchange
+      const clientId = process.env.DA_CLIENT_ID;
+      const clientSecret = process.env.DA_CLIENT_SECRET;
+      const serviceToken = process.env.DA_SERVICE_TOKEN;
+
+      // Validate required IMS credentials
+      if (!clientId || !clientSecret || !serviceToken) {
+        throw new Error('Missing required DA credentials: DA_CLIENT_ID, DA_CLIENT_SECRET, and DA_SERVICE_TOKEN must be set');
+      }
+
+      // Exchange IMS credentials for access token
+      const accessToken = await getAccessToken(clientId, clientSecret, serviceToken);
+      
+      // Perform DA preview/publish operations
+      await doDAPreviewPublish(pages, operation, context, accessToken);
+    } catch (error) {
+      core.error(`DA Preview/Publish Error: ${error.message}`);
+      core.setOutput('error_message', `❌ Error during DA ${operation}: ${error.message}`);
+    }
   } else {
-    core.error(`Invalid operation: ${operation}. Supported operations are 'upload'.`);
+    core.error(`Invalid operation: ${operation}. Supported operations are 'upload', 'preview', 'previewAndPublish'.`);
   }
 }
 
