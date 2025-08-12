@@ -51,6 +51,11 @@ function getOrgAndSiteFromTargetUrl(target) {
  */
 export async function getAccessToken(clientId, clientSecret, serviceToken) {
   core.info('Exchanging IMS credentials for access token...');
+  
+  // Log parameter validation (without exposing sensitive values)
+  core.info(`Using client_id: ${clientId.substring(0, 8)}... (length: ${clientId.length})`);
+  core.info(`Using client_secret: ****** (length: ${clientSecret.length})`);
+  core.info(`Using service_token: ${serviceToken.substring(0, 8)}... (length: ${serviceToken.length})`);
 
   // Prepare form-encoded data (matching the working curl request)
   const formParams = new URLSearchParams();
@@ -58,6 +63,8 @@ export async function getAccessToken(clientId, clientSecret, serviceToken) {
   formParams.append('client_id', clientId);
   formParams.append('client_secret', clientSecret);
   formParams.append('code', serviceToken);
+
+  core.info(`Making request to: ${IMS_TOKEN_ENDPOINT}`);
 
   const response = await fetch(IMS_TOKEN_ENDPOINT, {
     method: 'POST',
@@ -69,7 +76,18 @@ export async function getAccessToken(clientId, clientSecret, serviceToken) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    core.warning(`IMS token exchange failed ${response.status}: ${errorText}`);
+    core.error(`IMS token exchange failed ${response.status}: ${errorText}`);
+    
+    // Parse error response for better debugging
+    try {
+      const errorJson = JSON.parse(errorText);
+      if (errorJson.error === 'invalid_client') {
+        core.error('❌ Invalid client credentials. Please verify DA_CLIENT_ID and DA_CLIENT_SECRET are correct.');
+      }
+    } catch (parseError) {
+      // Error text is not JSON, continue with original error
+    }
+    
     throw new Error(`Failed to exchange IMS credentials: ${response.status} ${errorText}`);
   }
 
@@ -207,8 +225,18 @@ export async function run() {
         throw new Error('Missing required DA credentials: DA_CLIENT_ID, DA_CLIENT_SECRET, and DA_SERVICE_TOKEN must be set');
       }
 
+      // Log credential validation (without exposing values)
+      core.info(`✅ DA_CLIENT_ID length: ${clientId.length}`);
+      core.info(`✅ DA_CLIENT_SECRET length: ${clientSecret.length}`);
+      core.info(`✅ DA_SERVICE_TOKEN length: ${serviceToken.length}`);
+      
+      // Trim whitespace from credentials (just to be safe)
+      const trimmedClientId = clientId.trim();
+      const trimmedClientSecret = clientSecret.trim();
+      const trimmedServiceToken = serviceToken.trim();
+
       // Exchange IMS credentials for access token
-      const accessToken = await getAccessToken(clientId, clientSecret, serviceToken);
+      const accessToken = await getAccessToken(trimmedClientId, trimmedClientSecret, trimmedServiceToken);
 
       checkForRequiredContent(contentPath);
       const files = await uploadToDa(contentPath, target, accessToken, skipAssets);
