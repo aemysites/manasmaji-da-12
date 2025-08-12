@@ -13,12 +13,22 @@ inputs:
     required: false
     default: false
   operation:
-    description: "The operation to perform"
+    description: "The operation to perform (upload, preview, previewAndPublish)"
     required: false
     default: upload
+  pages:
+    description: "The pages to preview or publish (JSON array)"
+    required: false
+  context:
+    description: "The AEMY context for preview/publish operations"
+    required: false
 outputs:
   paths:
     description: "The list of paths that were uploaded"
+  successes:
+    description: "The number of successful preview/publish operations"
+  failures:
+    description: "The number of failed preview/publish operations"
   error_message:
     description: "Error message if the operation failed"
 runs:
