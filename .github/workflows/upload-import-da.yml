@@ -183,6 +183,8 @@ jobs:
           context: ${{ github.event.inputs.aemy_context }}
           pages: ${{ steps.da-upload-step.outputs.paths }}
           operation: ${{ github.event.inputs.previewAndPublish == 'true' && 'previewAndPublish' || 'preview' }}
+        env:
+          IMS_TOKEN: ${{ secrets.IMS_TOKEN }}
 
       - name: '[Check] Preview and publish'
         if: ${{ steps.preview-publish-content.outputs.error_message != '' }}
