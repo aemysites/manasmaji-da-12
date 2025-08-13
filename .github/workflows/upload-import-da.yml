@@ -66,12 +66,8 @@ jobs:
             echo "errorMessage=$errorMessage" >> $GITHUB_ENV
           fi
           
-          if [ -z "${{ env.IMS_TOKEN }}" ]; then
-            echo "⚠️ IMS_TOKEN not set."
-          fi
-
           if [ -z "${{ env.DA_CLIENT_ID }}" ] || [ -z "${{ env.DA_CLIENT_SECRET }}" ] || [ -z "${{ env.DA_SERVICE_TOKEN }}" ]; then
-            echo "⚠️ DA IMS client credentials are not set (DA_CLIENT_ID, DA_CLIENT_SECRET, DA_SERVICE_TOKEN)."
+            echo "⚠️ DA credentials are not set (DA_CLIENT_ID, DA_CLIENT_SECRET, DA_SERVICE_TOKEN). Proceeding without token."
           fi
 
           total_steps=2

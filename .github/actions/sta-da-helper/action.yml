@@ -11,11 +11,11 @@ inputs:
   skip_assets:
     description: "Whether to skip assets"
     required: false
-    default: false
+    default: 'false'
   operation:
     description: "The operation to perform"
     required: false
-    default: upload
+    default: 'upload'
 outputs:
   paths:
     description: "The list of paths that were uploaded"
