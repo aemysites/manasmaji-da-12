@@ -80,7 +80,7 @@ const fixPathForHelix = (filePath, force = false) => {
  * @param {string} method - The method to perform. Could be 'POST' or 'DELETE'.
  * @returns {Promise<boolean>} - Returns true if successful, false otherwise.
  */
-async function performPreviewPublish(apiEndpoint, pagePath, token, method) {
+async function performPreviewPublish(apiEndpoint, pagePath, token, method = HTTP_METHODS.POST) {
   const action = new URL(apiEndpoint)
     .pathname
     .startsWith('/preview/')
@@ -100,7 +100,7 @@ async function performPreviewPublish(apiEndpoint, pagePath, token, method) {
     }
 
     const resp = await fetch(`${apiEndpoint}${page}`, {
-      method: method || HTTP_METHODS.POST,
+      method,
       body: '{}',
       headers,
     });
