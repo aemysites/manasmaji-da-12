@@ -9,6 +9,7 @@ env:
   DA_CLIENT_SECRET: ${{ secrets.DA_CLIENT_SECRET }}
   DA_SERVICE_TOKEN: ${{ secrets.DA_SERVICE_TOKEN }}
   AEMY_API_KEY: ${{ secrets.AEMY_API_KEY }}
+  IMS_TOKEN: ${{ secrets.IMS_TOKEN }}
 on:
   workflow_dispatch:
     inputs:
@@ -66,8 +67,7 @@ jobs:
           fi
           
           if [ -z "${{ env.DA_CLIENT_ID }}" ] || [ -z "${{ env.DA_CLIENT_SECRET }}" ] || [ -z "${{ env.DA_SERVICE_TOKEN }}" ]; then
-            errorMessage="❌ DA credentials are not set in your GitHub repo. Required secrets: DA_CLIENT_ID, DA_CLIENT_SECRET, DA_SERVICE_TOKEN"
-            echo "errorMessage=$errorMessage" >> $GITHUB_ENV
+            echo "⚠️ DA credentials are not set (DA_CLIENT_ID, DA_CLIENT_SECRET, DA_SERVICE_TOKEN). Proceeding without token."
           fi
 
           total_steps=2
@@ -185,6 +185,15 @@ jobs:
           operation: ${{ github.event.inputs.previewAndPublish == 'true' && 'previewAndPublish' || 'preview' }}
         env:
           IMS_TOKEN: ${{ secrets.IMS_TOKEN }}
+      - name: '[Debug] Echo masked IMS token details'
+        if: ${{ env.preview_operation != '' }}
+        run: |
+          if [ -z "${{ secrets.IMS_TOKEN }}" ]; then
+            echo "IMS_TOKEN is empty or not set"
+          else
+            IMSTOK='${{ secrets.IMS_TOKEN }}'
+            echo "IMS_TOKEN present. length=${#IMSTOK} start=${IMSTOK:0:6}... end=...${IMSTOK: -4}"
+          fi
 
       - name: '[Check] Preview and publish'
         if: ${{ steps.preview-publish-content.outputs.error_message != '' }}
