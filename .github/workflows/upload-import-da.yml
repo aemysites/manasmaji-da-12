@@ -183,17 +183,6 @@ jobs:
           context: ${{ github.event.inputs.aemy_context }}
           pages: ${{ steps.da-upload-step.outputs.paths }}
           operation: ${{ github.event.inputs.previewAndPublish == 'true' && 'previewAndPublish' || 'preview' }}
-        env:
-          IMS_TOKEN: ${{ secrets.IMS_TOKEN }}
-      - name: '[Debug] Echo masked IMS token details'
-        if: ${{ env.preview_operation != '' }}
-        run: |
-          if [ -z "${{ secrets.IMS_TOKEN }}" ]; then
-            echo "IMS_TOKEN is empty or not set"
-          else
-            IMSTOK='${{ secrets.IMS_TOKEN }}'
-            echo "IMS_TOKEN present. length=${#IMSTOK} start=${IMSTOK:0:6}... end=...${IMSTOK: -4}"
-          fi
 
       - name: '[Check] Preview and publish'
         if: ${{ steps.preview-publish-content.outputs.error_message != '' }}
