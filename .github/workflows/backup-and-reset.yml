@@ -118,17 +118,26 @@ jobs:
           git push origin $BRANCH_NAME
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
-      - name: Ensure RESET_COMMIT_SHA secret is set
+      - name: Determine reset commit
+        id: determine_reset_commit
         run: |
-          if [ -z "${{ secrets.RESET_COMMIT_SHA }}" ]; then
-            echo "❌ The secret RESET_COMMIT_SHA is not set in your repository."
+          # Find merge commit from aemysites/issue-1 by aem-aemy
+          target=$(git log origin/main --grep="from aemysites/issue-1$" --author="aem-aemy" -n 1 --pretty=format:%H || true)
+          
+          # Check if we found the commit
+          if [ -z "$target" ]; then
+            echo "❌ No commit found ending with 'from aemysites/issue-1'"
             exit 1
           fi
+          
+          echo "Reset target: $target"
+          echo "Commit message: $(git log -1 --pretty=%s "$target")"
+          echo "reset_commit_sha=$target" >> $GITHUB_OUTPUT
 
-      - name: Reset main to specified commit
+      - name: Reset main to determined commit
         run: |
           git checkout main
-          git reset --hard ${{ secrets.RESET_COMMIT_SHA }}
+          git reset --hard ${{ steps.determine_reset_commit.outputs.reset_commit_sha }}
           git push origin main --force
 
       - name: Move SharePoint content to backup folder
@@ -139,3 +148,17 @@ jobs:
           host: ${{ fromJSON(steps.mountpoint_data.outputs.data).host }}
           site_path: ${{ fromJSON(steps.mountpoint_data.outputs.data).site }}
           folder_path: ${{ fromJSON(steps.mountpoint_data.outputs.data).path }}
+
+      - name: Create AEMY Installation issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.WORKFLOW_PAT }}
+          script: |
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'AEMY Installation',
+              body: 'Setup the workflows',
+              labels: ['aemy-go', 'aemy-help', 'aemy-merge']
+            });
+            console.log(`Created issue #${issue.number}: ${issue.html_url}`);

@@ -18,6 +18,10 @@ import path from 'path';
 
 const GRAPH_API = 'https://graph.microsoft.com/v1.0';
 
+// Retry configuration - can be overridden via environment variables
+const UPLOAD_MAX_RETRIES = parseInt(process.env.STA_UPLOAD_MAX_RETRIES, 10) || 2;
+const UPLOAD_BASE_DELAY = parseInt(process.env.STA_UPLOAD_BASE_DELAY, 10) || 1000;
+
 // Upload report for this invocation.  Global to simplify recursion.
 const uploadReport = {
   uploads: 0,
@@ -41,6 +45,102 @@ async function sleep(ms) {
   });
 }
 
+/**
+ * Custom error class that preserves the HTTP response for retry logic
+ */
+class GraphApiError extends Error {
+  constructor(message, response) {
+    super(message);
+    this.name = 'GraphApiError';
+    this.response = response;
+  }
+}
+
+/**
+ * Get delay from Retry-After header
+ * @param {Response} response - Fetch response object
+ * @returns {number} Delay in milliseconds, or null if header is not present/invalid
+ */
+function getRetryAfterDelay(response) {
+  const retryAfter = response.headers.get('Retry-After');
+  if (!retryAfter) {
+    return null;
+  }
+
+  let millisToSleep = Math.round(parseFloat(retryAfter) * 1000);
+  if (Number.isNaN(millisToSleep)) {
+    const parsedDate = Date.parse(retryAfter);
+    if (Number.isNaN(parsedDate)) {
+      return null; // Invalid date string
+    }
+    millisToSleep = Math.max(0, parsedDate - Date.now());
+  }
+
+  return millisToSleep > 0 ? millisToSleep : null;
+}
+
+/**
+ * Utility function to retry upload operations with exponential backoff for transient errors
+ * @param {Function} operation - Async function that performs the upload operation
+ * @param {string} context - Context for logging (e.g., file path)
+ * @param {number} maxRetries - Maximum number of retry attempts
+ * @returns {Promise<any>} - The result of the operation
+ */
+async function retryUploadOperation(operation, context, maxRetries = UPLOAD_MAX_RETRIES) {
+  const retryableStatuses = [429, 500, 502, 503, 504];
+  let lastError;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const result = await operation();
+      if (attempt > 0) {
+        core.info(`✓ Upload operation succeeded on attempt ${attempt + 1} for ${context}`);
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+
+      // Check if this is a retryable error
+      let isRetryable = false;
+      let retryAfterDelay = null;
+
+      if (error.name === 'GraphApiError' && error.response) {
+        // Graph API errors with response object
+        isRetryable = retryableStatuses.includes(error.response.status);
+        if (isRetryable) {
+          retryAfterDelay = getRetryAfterDelay(error.response);
+        }
+      } else if (error.message && error.message.includes('fetch failed')) {
+        // Network errors
+        isRetryable = true;
+      } else {
+        // Legacy: Check for Graph API errors with retryable status codes in the message
+        const isRetryableError = error.message && (
+          retryableStatuses.some((status) => error.message.includes(`Graph API error ${status}`))
+        );
+        isRetryable = isRetryableError;
+      }
+
+      if (attempt < maxRetries && isRetryable) {
+        // Calculate delay: prefer Retry-After header, fall back to exponential backoff
+        const waitTime = retryAfterDelay !== null
+          ? retryAfterDelay
+          : UPLOAD_BASE_DELAY * (2 ** attempt);
+        const delaySource = retryAfterDelay !== null ? 'Retry-After header' : 'exponential backoff';
+
+        core.info(`⏳ Upload operation failed for ${context}. Retrying in ${waitTime}ms (attempt ${attempt + 1}/${maxRetries + 1}) using ${delaySource}: ${error.message}`);
+        await sleep(waitTime);
+      } else {
+        // Non-retryable error or max retries exceeded
+        break;
+      }
+    }
+  }
+
+  // If we get here, all retries failed
+  throw lastError || new Error(`Upload operation failed after ${maxRetries + 1} attempts for ${context}`);
+}
+
 async function graphFetch(token, endpoint, initOptions) {
   const init = initOptions || {
     headers: {
@@ -61,50 +161,68 @@ async function graphFetch(token, endpoint, initOptions) {
       uploadReport.lockedFiles += 1;
     }
     const errorText = await res.text();
-    throw new Error(`Graph API error ${res.status}: ${errorText}`);
+    throw new GraphApiError(`Graph API error ${res.status}: ${errorText}`, res);
   }
 
   return res.json();
 }
 
 /**
- * Upload 1 file to SharePoint.
+ * Graph API fetch with retry logic for transient failures.
+ * @param {string} token - Access token
+ * @param {string} endpoint - API endpoint
+ * @param {Object} initOptions - Fetch options
+ * @returns {Promise<Object>} - JSON response
+ */
+async function graphFetchWithRetry(token, endpoint, initOptions) {
+  return retryUploadOperation(
+    () => graphFetch(token, endpoint, initOptions),
+    endpoint,
+  );
+}
+
+/**
+ * Upload file with retry logic for transient failures.
  * @param {string} accessToken SharePoint access token
  * @param {string} driveId Destination root drive id
  * @param {string} folderId Destination folder id within the drive id root
- * @param {Object.<string, string, string>} file The file name, full local and relative
- *                                               target path of the file to be uploaded.
+ * @param {Object.<string, string, string>} file The file to upload
  * @returns {Promise<boolean>} The result of the upload operation.
  */
-async function uploadFile(accessToken, driveId, folderId, file) {
-  const fileStream = fs.createReadStream(file.path);
-  const mimeType = mime.lookup(file.path) || 'application/octet-stream';
-
-  core.debug(`Uploading ${file.path} with mime type ${mimeType}`);
-
+async function uploadFileWithRetry(accessToken, driveId, folderId, file) {
   try {
-    await graphFetch(
-      accessToken,
-      `/drives/${driveId}/items/${folderId}:${file.relative}:/content`,
-      {
-        method: 'PUT',
-        body: fileStream,
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json',
-          'Content-Type': mimeType,
-        },
-        duplex: 'half', // Required for streaming requests
-      },
-    );
+    await retryUploadOperation(
+      async () => {
+        // Need to recreate the file stream for each retry attempt
+        const fileStream = fs.createReadStream(file.path);
+        const mimeType = mime.lookup(file.path) || 'application/octet-stream';
 
-    core.debug(`File ${file.path} uploaded successfully.`);
+        core.debug(`Uploading ${file.path} with mime type ${mimeType}`);
+
+        await graphFetch(
+          accessToken,
+          `/drives/${driveId}/items/${folderId}:${file.relative}:/content`,
+          {
+            method: 'PUT',
+            body: fileStream,
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: 'application/json',
+              'Content-Type': mimeType,
+            },
+            duplex: 'half', // Required for streaming requests
+          },
+        );
+
+        core.debug(`File ${file.path} uploaded successfully.`);
+      },
+      file.path,
+    );
     return true;
   } catch (error) {
     core.warning(`Failed to upload file ${file.path}: ${error.message}`);
+    return false;
   }
-
-  return false;
 }
 
 /**
@@ -161,7 +279,7 @@ async function createFoldersIfNecessary(
           parentId = data.id;
         } else if (res.status === 409) {
           // Already exists - get its data.
-          const existing = await graphFetch(
+          const existing = await graphFetchWithRetry(
             accessToken,
             `/drives/${driveId}/items/${parentId}/children?$filter=name eq '${segment}'`,
           );
@@ -243,7 +361,7 @@ async function populateSourceStructure(srcFolder, isTopLevel = false) {
  */
 async function uploadFiles(accessToken, driveId, folderId, sourceFiles, delay) {
   for (const item of sourceFiles) {
-    const success = await uploadFile(accessToken, driveId, folderId, item);
+    const success = await uploadFileWithRetry(accessToken, driveId, folderId, item);
     if (success) {
       uploadReport.uploads += 1;
       uploadReport.uploadList.push(item.relative);
@@ -323,3 +441,6 @@ export async function run() {
 }
 
 await run();
+
+// Export functions for testing
+export { retryUploadOperation, graphFetchWithRetry, uploadFileWithRetry };
