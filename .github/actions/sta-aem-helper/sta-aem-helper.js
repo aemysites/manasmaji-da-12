@@ -219,7 +219,20 @@ async function run() {
       const pagesInput = core.getInput('pages');
       const context = core.getInput('context');
       const pages = JSON.parse(pagesInput);
-      const token = process.env.IMS_TOKEN;
+      const token = process.env.IMS_TOKEN || '';
+
+      // Debug: print masked token details once per run
+      try {
+        if (!token) {
+          core.info('IMS_TOKEN not set or empty. Requests will be unauthenticated.');
+        } else {
+          const prefix = token.slice(0, 6);
+          const suffix = token.slice(-4);
+          core.info(`IMS_TOKEN present. length=${token.length}, start=${prefix}..., end=...${suffix}`);
+        }
+      } catch (e) {
+        // no-op
+      }
 
       if (operation === AEM_HELPER_OPERATIONS.DELETE_PREVIEW_AND_PUBLISH) {
         await deletePreviewPublish(pages, context, token);
