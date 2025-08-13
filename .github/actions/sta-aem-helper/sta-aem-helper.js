@@ -17,27 +17,6 @@ import { AEM_HELPER_OPERATIONS } from './sta-aem-helper-constants.js';
 import { doPreviewPublish, deletePreviewPublish } from './aem-preview-publish.js';
 
 /**
- * Exchange DA credentials (DA_CLIENT_ID, DA_CLIENT_SECRET, DA_SERVICE_TOKEN) for IMS bearer token.
- * @returns {Promise<string|undefined>}
- */
-async function getIMSBearerTokenForDA() {
-  const daClientId = (process.env.DA_CLIENT_ID || '').trim();
-  const daClientSecret = (process.env.DA_CLIENT_SECRET || '').trim();
-  const daServiceToken = (process.env.DA_SERVICE_TOKEN || '').trim();
-
-  if (daClientId && daClientSecret && daServiceToken) {
-    try {
-      const { getAccessToken } = await import('../sta-da-helper/sta-da-helper.js');
-      return getAccessToken(daClientId, daClientSecret, daServiceToken);
-    } catch {
-      // ignore
-    }
-  }
-
-  return undefined;
-}
-
-/**
  * Fetches an Adobe IMS access token using JWT authentication.
  * Credit to @adobe/jwt-auth.
  *
@@ -240,9 +219,7 @@ async function run() {
       const pagesInput = core.getInput('pages');
       const context = core.getInput('context');
       const pages = JSON.parse(pagesInput);
-      let token = process.env.IMS_TOKEN;
-
-      token = token ? token : await getIMSBearerTokenForDA();
+      const token = process.env.IMS_TOKEN;
 
       if (operation === AEM_HELPER_OPERATIONS.DELETE_PREVIEW_AND_PUBLISH) {
         await deletePreviewPublish(pages, context, token);
